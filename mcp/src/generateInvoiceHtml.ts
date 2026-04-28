@@ -115,7 +115,7 @@ export function generateInvoiceHtml(invoice: Invoice): string {
     invoice.notes
       ? `<div style="border:1px solid #ccc;padding:12px;margin-bottom:16px;font-size:11px">
     <div style="font-weight:bold;margin-bottom:4px">備考：</div>
-    <div style="white-space:pre-wrap">${invoice.notes}</div>
+    <div style="white-space:pre-wrap">${invoice.notes.replace(/\\n/g, "\n")}</div>
   </div>`
       : ""
   }
