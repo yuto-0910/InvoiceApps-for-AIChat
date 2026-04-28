@@ -7,11 +7,11 @@ import os from "os";
 import { fileURLToPath } from "url";
 import { parseSender } from "../../web/lib/parseSender.js";
 import { generateInvoiceHtml } from "./generateInvoiceHtml.js";
+import { generateInvoicePdf } from "./generateInvoicePdf.js";
 import type { Invoice, InvoiceItem } from "../../web/types/invoice.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// sender.md のデフォルトパス（env var SENDER_MD_PATH で上書き可能）
 const defaultSenderMdPath = path.resolve(
   __dirname,
   "../../web/config/sender.md"
@@ -51,7 +51,7 @@ const server = new McpServer({
 
 server.tool(
   "create_invoice",
-  "請求書を生成して Downloads フォルダに HTML ファイルとして保存します。" +
+  "請求書を生成して Downloads フォルダに保存します。" +
     "必要な情報をすべてユーザーから収集してから呼び出してください。",
   {
     client_name: z
@@ -63,6 +63,11 @@ server.tool(
       .min(1)
       .max(10)
       .describe("品目リスト（最大10件）。各品目に項目名・数量・単位・税抜金額が必要です"),
+    output_format: z
+      .enum(["pdf", "html"])
+      .optional()
+      .default("pdf")
+      .describe("出力形式。pdf（デフォルト）/ html から選択"),
     invoice_date: z
       .string()
       .optional()
@@ -88,6 +93,7 @@ server.tool(
       const invoiceDate = args.invoice_date ?? today();
       const dueDate = args.due_date ?? addDays(invoiceDate, 30);
       const invoiceNumber = args.invoice_number ?? generateInvoiceNumber();
+      const outputFormat = (args.output_format ?? "pdf") as "pdf" | "html";
 
       const items: InvoiceItem[] = args.items.map((item, i) => ({
         id: `item-${i}`,
@@ -109,22 +115,33 @@ server.tool(
         sender,
       };
 
-      const html = generateInvoiceHtml(invoice);
-
-      const filename = `請求書_${args.client_name}様_${invoiceNumber}.html`;
+      // 拡張子・ファイル名を決定
+      const extMap = { pdf: ".pdf", html: ".html" } as const;
+      const ext = extMap[outputFormat];
+      const filename = `請求書_${args.client_name}様_${invoiceNumber}${ext}`;
       const outputPath = path.join(os.homedir(), "Downloads", filename);
-      fs.writeFileSync(outputPath, html, "utf-8");
+
+      // フォーマットに応じて生成・保存
+      if (outputFormat === "pdf") {
+        const buf = await generateInvoicePdf(invoice);
+        fs.writeFileSync(outputPath, buf);
+      } else {
+        const html = generateInvoiceHtml(invoice);
+        fs.writeFileSync(outputPath, html, "utf-8");
+      }
 
       const subtotal = items.reduce((s, i) => s + i.unit_price, 0);
       const tax = Math.floor(subtotal * sender.tax_rate);
       const total = subtotal + tax;
+
+      const formatLabel = { pdf: "PDF", html: "HTML" }[outputFormat];
 
       return {
         content: [
           {
             type: "text",
             text: [
-              `✅ 請求書を生成しました`,
+              `✅ 請求書を生成しました（${formatLabel}）`,
               ``,
               `📄 ファイル: ${outputPath}`,
               ``,
@@ -139,8 +156,9 @@ server.tool(
               `  税抜合計: ¥${subtotal.toLocaleString()}`,
               `  消費税(${Math.round(sender.tax_rate * 100)}%): ¥${tax.toLocaleString()}`,
               `  お振込金額: ¥${total.toLocaleString()}`,
-              ``,
-              `ブラウザで開いて「印刷 → PDFに保存」で PDF 化できます。`,
+              ...(outputFormat === "html"
+                ? [``, `ブラウザで開いて「印刷 → PDFに保存」で PDF 化できます。`]
+                : []),
             ].join("\n"),
           },
         ],
